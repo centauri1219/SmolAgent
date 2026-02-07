@@ -1,0 +1,18 @@
+# Start with a lightweight Python Linux
+FROM python:3.9-slim
+
+# Install common developer tools "Devin" might need
+# (Git, Curl, Node.js for web apps, Nano for editing)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    nodejs \
+    npm \
+    nano \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Keep the container running indefinitely so the agent can log in
+CMD ["tail", "-f", "/dev/null"]
