@@ -64,7 +64,7 @@ def run_shell_command(command: str) -> str:
     # 1.5B Model Fix: Strip unnecessary quotes that confuse the shell
     clean_command = command.strip("'").strip('"')
     
-    print(f"    > 🐚 Shell: {clean_command}")
+    print(f"    > Shell: {clean_command}")
     
     try:
         # We use /bin/sh -c to ensure complex commands (like pipes or python args) work
@@ -93,7 +93,7 @@ def write_file(filename: str, content: str) -> str:
         filename: The name of the file (e.g., 'main.py').
         content: The text content to write into the file.
     """
-    print(f"    > 📝 Write: {filename}")
+    print(f"    > Write: {filename}")
     try:
         # Write to the local mounted directory
         local_path = os.path.join(WORKSPACE_DIR, filename)
@@ -131,7 +131,7 @@ agent = ToolCallingAgent(
 # 5. MAIN LOOP
 # ==============================================================================
 if __name__ == "__main__":
-    print("\n✅ Devin (Smart Mode) is Ready!")
+    print("\nDevin (Smart Mode) is Ready!")
     print("   Capabilities: [Shell Execution] [File Writing] [Web Search]")
     print("   Type 'exit' to quit.")
     print("------------------------------------------------------------------")
@@ -145,10 +145,10 @@ if __name__ == "__main__":
             # Tip: Adding this constraint helps the small model stay focused
             prompt = f"{user_input} (IMPORTANT: Do not output the final answer until you have verified the result with a shell command.)"
             
-            print("\n🤖 Devin is working...")
+            print("\nDevin is working...")
             agent.run(prompt)
             
         except KeyboardInterrupt:
             print("\n[!] Task interrupted.")
         except Exception as e:
-            print(f"\n❌ Error: {e}")
+            print(f"\nError: {e}")
