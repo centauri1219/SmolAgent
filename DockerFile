@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y \
     nano \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip install pandas numpy requests beautifulsoup4
+
 # Set the working directory inside the container
 WORKDIR /app
 

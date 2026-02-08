@@ -1,154 +1,135 @@
 import os
 import docker
+import json
 from smolagents import ToolCallingAgent, LiteLLMModel, tool, DuckDuckGoSearchTool
 
 # ==============================================================================
 # 1. CONFIGURATION
 # ==============================================================================
-# We use the 1.5B model for speed and reliability with JSON tools.
 MODEL_ID = "ollama/qwen2.5-coder:1.5b-instruct"
 API_BASE = "http://localhost:11434"
 CONTAINER_NAME = "smol_devin_sandbox"
 WORKSPACE_DIR = os.path.join(os.getcwd(), "workspace")
 
-# Create the workspace folder if it doesn't exist
 if not os.path.exists(WORKSPACE_DIR):
     os.makedirs(WORKSPACE_DIR)
 
 # ==============================================================================
-# 2. SETUP DOCKER (The Sandbox)
+# 2. SETUP DOCKER
 # ==============================================================================
 print(f"[*] Connecting to Docker...")
 client = docker.from_env()
 
 try:
-    # Check if the container is already running
     container = client.containers.get(CONTAINER_NAME)
     if container.status != "running":
         container.start()
-    print(f"[*] Found running sandbox: {container.short_id}")
-except docker.errors.NotFound:
-    print(f"[*] Creating new sandbox...")
-    # Attempt to use our custom image, fallback to python:3.9-slim
-    try:
-        client.images.get("smol-devin-image")
-        image = "smol-devin-image"
-    except:
-        print("[!] Custom image not found, using python:3.9-slim")
-        image = "python:3.9-slim"
-
+except:
     container = client.containers.run(
-        image,
+        "python:3.9-slim",
         name=CONTAINER_NAME,
         detach=True,
         tty=True,
-        # Mount the workspace so you can see the files the agent creates
         volumes={WORKSPACE_DIR: {'bind': '/app', 'mode': 'rw'}},
         working_dir="/app"
     )
-    print(f"[*] Sandbox started: {container.short_id}")
 
 # ==============================================================================
-# 3. DEFINE SMART TOOLS
+# 3. DEFINE "GUARDRAIL" TOOLS
 # ==============================================================================
 
 @tool
 def run_shell_command(command: str) -> str:
     """
-    Executes a shell command inside the Docker environment.
-    
+    Executes a shell command. 
     Args:
-        command: The command to run (e.g., 'ls -la', 'python script.py'). 
-                 Do not wrap the command in extra quotes.
+        command: The command string (e.g. 'ls -la', 'python script.py').
     """
-    # 1.5B Model Fix: Strip unnecessary quotes that confuse the shell
-    clean_command = command.strip("'").strip('"')
+    # GUARDRAIL 1: Fix JSON Objects
+    # Sometimes the model sends {'command': 'ls'} instead of just 'ls'
+    if isinstance(command, dict):
+        command = command.get('command', str(command))
     
+    # Clean up quotes
+    clean_command = str(command).strip("'").strip('"')
+    
+    # GUARDRAIL 2: The "Did you make the file?" Check
+    # If the model tries to run a python script, we check if it exists locally first.
+    if clean_command.startswith("python "):
+        filename = clean_command.split(" ")[1] # Get 'script.py'
+        local_file_path = os.path.join(WORKSPACE_DIR, filename)
+        
+        # If the file is missing, BLOCK the command and scold the model
+        if not os.path.exists(local_file_path):
+            return f"SYSTEM ERROR: You cannot run '{filename}' because it does not exist yet! STOP. You must use the 'write_file' tool to create '{filename}' first."
+
     print(f"    > Shell: {clean_command}")
     
     try:
-        # We use /bin/sh -c to ensure complex commands (like pipes or python args) work
         result = container.exec_run(
             f"/bin/sh -c '{clean_command}'", 
             workdir="/app"
         )
         output = result.output.decode("utf-8")
-        
-        # If the command works but has no output (like mkdir), return success
-        if not output.strip() and result.exit_code == 0:
-            return "Success (No output)"
-        elif result.exit_code != 0:
-            return f"Error (Exit Code {result.exit_code}): {output}"
-            
+        if not output.strip():
+            return "Success (Command ran, no output)"
         return output
     except Exception as e:
-        return f"System Error: {str(e)}"
+        return f"Error: {str(e)}"
 
 @tool
 def write_file(filename: str, content: str) -> str:
     """
-    Writes content to a file in the workspace.
-    
+    Writes a file to the workspace.
     Args:
-        filename: The name of the file (e.g., 'main.py').
-        content: The text content to write into the file.
+        filename: Name of file (e.g. 'main.py').
+        content: The string content of the file.
     """
     print(f"    > Write: {filename}")
     try:
-        # Write to the local mounted directory
         local_path = os.path.join(WORKSPACE_DIR, filename)
         with open(local_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return f"Successfully wrote {len(content)} bytes to {filename}"
+        return f"Success: File '{filename}' has been saved. NOW you can run it."
     except Exception as e:
-        return f"File Error: {str(e)}"
+        return f"Error: {str(e)}"
 
 # ==============================================================================
 # 4. INITIALIZE AGENT
 # ==============================================================================
-print(f"[*] Loading Model: {MODEL_ID}...")
+print(f"[*] Loading {MODEL_ID}...")
 
-# Connect to Ollama
 model = LiteLLMModel(
     model_id=MODEL_ID,
     api_base=API_BASE,
-    api_key="ollama", # Dummy key
-    num_ctx=4096      # Enough memory for conversation history
+    api_key="ollama",
+    num_ctx=4096 
 )
 
-# Initialize Web Search Tool
 search_tool = DuckDuckGoSearchTool()
 
-# We use ToolCallingAgent (JSON Mode) because it is more robust for 1.5B models
 agent = ToolCallingAgent(
     tools=[run_shell_command, write_file, search_tool],
     model=model,
-    max_steps=12,      # Give it enough steps to think and correct errors
-    verbosity_level=1  # 1 = clean logs, 2 = detailed debug
+    max_steps=15,
+    verbosity_level=1
 )
 
 # ==============================================================================
 # 5. MAIN LOOP
 # ==============================================================================
 if __name__ == "__main__":
-    print("\nDevin (Smart Mode) is Ready!")
-    print("   Capabilities: [Shell Execution] [File Writing] [Web Search]")
-    print("   Type 'exit' to quit.")
+    print("\nDevin (Guardrails Mode) is Ready!")
+    print("   I will now stop the model from running missing files.")
     print("------------------------------------------------------------------")
     
     while True:
-        try:
-            user_input = input("\n>> Task: ")
-            if user_input.lower() in ["exit", "quit"]:
-                break
+        user_input = input("\n>> Task: ")
+        if user_input.lower() in ["exit", "quit"]:
+            break
             
-            # Tip: Adding this constraint helps the small model stay focused
-            prompt = f"{user_input} (IMPORTANT: Do not output the final answer until you have verified the result with a shell command.)"
-            
-            print("\nDevin is working...")
-            agent.run(prompt)
-            
-        except KeyboardInterrupt:
-            print("\n[!] Task interrupted.")
-        except Exception as e:
-            print(f"\nError: {e}")
+        # We append a reminder to the user's prompt
+        prompt = user_input + " (Remember: Create the file first, THEN run it.)"
+        
+        print("\nDevin is working...")
+        agent.run(prompt)
